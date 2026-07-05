@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Presensi Dashboard - PX PRSN</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
     <style>
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -15,6 +19,22 @@
 <body class="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden relative">
 
     @include('sidebar')
+
+    <div id="camera-modal" class="hidden absolute inset-0 bg-black/60 z-50 flex items-center justify-center backdrop-blur-sm transition-opacity">
+        <div class="bg-white p-6 rounded-2xl shadow-2xl w-96 border border-slate-100 flex flex-col items-center">
+            <h3 class="text-lg font-bold text-slate-800 mb-4">Scanning Wajah...</h3>
+            
+            <div id="webcam-container" class="w-64 h-64 bg-slate-100 rounded-xl overflow-hidden shadow-inner border-2 border-slate-200 mb-4 flex items-center justify-center">
+                <span class="text-slate-400 text-sm animate-pulse" id="loading-text">Memuat Kamera...</span>
+            </div>
+            
+            <div id="label-container" class="text-sm font-semibold text-blue-600 mb-6 h-6">Menunggu deteksi...</div>
+            
+            <button type="button" onclick="stopCamera()" class="w-full bg-red-50 text-red-600 hover:bg-red-100 py-2.5 rounded-lg font-medium transition-colors border border-red-100">
+                Tutup Kamera
+            </button>
+        </div>
+    </div>
 
     <div class="flex-1 flex flex-col p-8 overflow-y-auto">
         
@@ -43,7 +63,7 @@
         </div>
 
         @if($active_pertemuan->is_active)
-            <form action="/presensi" method="POST" class="flex flex-wrap items-center gap-4 mb-8 bg-blue-50 p-4 rounded-xl shadow-sm border border-blue-100">
+            <form id="presensiForm" action="/presensi" method="POST" class="flex flex-wrap items-center gap-4 mb-8 bg-blue-50 p-4 rounded-xl shadow-sm border border-blue-100">
                 @csrf
                 <input type="hidden" name="pertemuan_id" value="{{ $active_pertemuan->id }}">
                 <div class="relative flex-1 max-w-md">
@@ -55,12 +75,11 @@
                     Presensi
                 </button>
                 
-                <button type="button" onclick="alert('Under Maintenance: Fitur Presensi Kamera sedang dalam tahap pengembangan untuk integrasi Teachable Machine. Silakan input manual.');" 
-                        class="bg-slate-100 text-slate-600 px-5 py-2 rounded-lg font-medium hover:bg-slate-200 border border-slate-300 transition-all flex items-center gap-2">
+                <button type="button" onclick="startCamera()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-indigo-700 shadow-sm transition-all flex items-center gap-2">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                     <div class="flex flex-col items-start leading-tight">
                         <span class="text-sm">Presensi Kamera</span>
-                        <span class="text-[10px] opacity-70 uppercase tracking-wide">Under Maintenance</span>
+                        <span class="text-[10px] opacity-80 uppercase tracking-wide">AI Scanner</span>
                     </div>
                 </button>
             </form>
@@ -90,7 +109,8 @@
                         <tr class="bg-slate-50/50">
                             <th class="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200">NIM</th>
                             <th class="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200">Nama Lengkap</th>
-                            <th class="py-3 px-6 border-b border-slate-200 text-right">Status</th>
+                            <th class="py-3 px-6 border-b border-slate-200 text-center">Status</th>
+                            <th class="py-3 px-6 border-b border-slate-200 text-right">Aksi</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
@@ -98,10 +118,22 @@
                         <tr class="hover:bg-slate-50/80 transition-colors">
                             <td class="py-4 px-6 text-sm font-medium text-slate-900">{{ $s->nim }}</td>
                             <td class="py-4 px-6 text-sm text-slate-600">{{ $s->nama_lengkap }}</td>
-                            <td class="py-4 px-6 text-right"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Hadir</span></td>
+                            <td class="py-4 px-6 text-center">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Hadir</span>
+                            </td>
+                            <td class="py-4 px-6 text-right">
+                                <form action="/batal-presensi" method="POST" onsubmit="return confirm('Batalkan presensi untuk {{ $s->nama_lengkap }}?');" class="inline-block">
+                                    @csrf
+                                    <input type="hidden" name="nim" value="{{ $s->nim }}">
+                                    <input type="hidden" name="pertemuan_id" value="{{ $active_pertemuan->id }}">
+                                    <button type="submit" class="p-1.5 bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 rounded-md transition-all shadow-sm" title="Batalkan Presensi">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                    </button>
+                                </form>
+                            </td>
                         </tr>
                         @empty
-                        <tr><td colspan="3" class="py-8 text-center text-slate-500 text-sm">Belum ada data presensi.</td></tr>
+                        <tr><td colspan="4" class="py-8 text-center text-slate-500 text-sm">Belum ada data presensi.</td></tr>
                         @endforelse
                     </tbody>
                 </table>
@@ -113,7 +145,8 @@
                         <tr class="bg-slate-50/50">
                             <th class="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200">NIM</th>
                             <th class="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200">Nama Lengkap</th>
-                            <th class="py-3 px-6 border-b border-slate-200 text-right">Status</th>
+                            <th class="py-3 px-6 border-b border-slate-200 text-center">Status</th>
+                            <th class="py-3 px-6 border-b border-slate-200 text-right">Aksi</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
@@ -121,7 +154,12 @@
                         <tr class="hover:bg-slate-50/80 transition-colors">
                             <td class="py-4 px-6 text-sm font-medium text-slate-900">{{ $s->nim }}</td>
                             <td class="py-4 px-6 text-sm text-slate-600">{{ $s->nama_lengkap }}</td>
-                            <td class="py-4 px-6 text-right"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Belum Presensi</span></td>
+                            <td class="py-4 px-6 text-center">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Belum Presensi</span>
+                            </td>
+                            <td class="py-4 px-6 text-right">
+                                <span class="text-slate-300">-</span>
+                            </td>
                         </tr>
                         @endforeach
                     </tbody>
@@ -140,7 +178,113 @@
         @endif
     </div>
 
-    <script>
+    <script type="text/javascript">
+        // PASTE YOUR URL HERE!
+        const URL = "https://teachablemachine.withgoogle.com/models/cpoqa4ywc/";
+
+        let model, webcam, labelContainer, maxPredictions;
+        let isWebcamRunning = false;
+        let isSubmitting = false;
+
+        async function startCamera() {
+            document.getElementById('camera-modal').classList.remove('hidden');
+            
+            if (!model) {
+                const modelURL = URL + "model.json";
+                const metadataURL = URL + "metadata.json";
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+            }
+
+            if (!isWebcamRunning) {
+                const flip = true; 
+                webcam = new tmImage.Webcam(256, 256, flip); 
+                await webcam.setup(); 
+                await webcam.play();
+                isWebcamRunning = true;
+                window.requestAnimationFrame(loop);
+
+                const wcContainer = document.getElementById("webcam-container");
+                wcContainer.innerHTML = ''; // Clear loading text
+                wcContainer.appendChild(webcam.canvas);
+                webcam.canvas.classList.add("rounded-xl");
+                
+                labelContainer = document.getElementById("label-container");
+            }
+        }
+
+        function stopCamera() {
+            if (webcam && isWebcamRunning) {
+                webcam.stop();
+                isWebcamRunning = false;
+            }
+            document.getElementById('camera-modal').classList.add('hidden');
+        }
+
+        async function loop() {
+            if (isWebcamRunning) {
+                webcam.update();
+                await predict();
+                window.requestAnimationFrame(loop);
+            }
+        }
+
+        // NEW: Function to check how bright the room is
+        function getBrightness(canvas) {
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            let colorSum = 0;
+
+            // Sample pixels to calculate average brightness
+            for (let i = 0; i < data.length; i += 16) {
+                const r = data[i];
+                const g = data[i+1];
+                const b = data[i+2];
+                colorSum += (r + g + b) / 3;
+            }
+            return colorSum / (data.length / 16);
+        }
+
+        async function predict() {
+            if(isSubmitting) return;
+
+            const prediction = await model.predict(webcam.canvas);
+            
+            // 1. Find the probability of the "Background" class specifically
+            let backgroundProb = 0;
+            let highestProb = 0;
+            let bestClass = "";
+
+            for (let i = 0; i < maxPredictions; i++) {
+                if (prediction[i].className === "Background") {
+                    backgroundProb = prediction[i].probability;
+                }
+                if (prediction[i].probability > highestProb) {
+                    highestProb = prediction[i].probability;
+                    bestClass = prediction[i].className;
+                }
+            }
+
+            // 2. Logic: Only submit if:
+            // - The best class is NOT Background
+            // - Confidence is > 95% (Raise this from 90% to be stricter)
+            // - The student probability is MUCH higher than the background probability
+            const isStudent = (bestClass !== "Background" && bestClass !== "");
+            const isConfident = (highestProb > 0.95); 
+            const isClearlyNotBackground = (highestProb > (backgroundProb + 0.5));
+
+            if (isStudent && isConfident && isClearlyNotBackground) {
+                isSubmitting = true;
+                stopCamera();
+                document.getElementById('nimInput').value = bestClass;
+                document.getElementById('presensiForm').submit();
+            } else {
+                labelContainer.innerHTML = (bestClass === "Background" ? "Menunggu..." : bestClass) + 
+                                           " (" + (highestProb * 100).toFixed(0) + "%)";
+            }
+        }
+
         function switchTab(tab) {
             document.getElementById('tab-hadir').style.display = tab === 'hadir' ? 'block' : 'none';
             document.getElementById('tab-belum').style.display = tab === 'belum' ? 'block' : 'none';

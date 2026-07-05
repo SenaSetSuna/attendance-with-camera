@@ -161,6 +161,25 @@ Route::post('/presensi', function (Request $request) {
     return back()->with('success', 'Berhasil: Presensi ' . $mahasiswa->nama_lengkap . ' dicatat.');
 });
 
+// Route untuk Membatalkan Presensi (Remove from Hadir)
+Route::post('/batal-presensi', function (Request $request) {
+    if (!$request->session()->has('logged_in')) return redirect('/login');
+    $request->validate(['nim' => 'required|string', 'pertemuan_id' => 'required|integer']);
+    
+    $nim = $request->input('nim');
+    $pertemuan_id = $request->input('pertemuan_id');
+
+    $presensi = Presensi::where('nim', $nim)->where('pertemuan_id', $pertemuan_id)->first();
+
+    if ($presensi) {
+        $presensi->delete();
+        $mahasiswa = Mahasiswa::where('nim', $nim)->first();
+        return back()->with('success', 'Berhasil: Presensi ' . ($mahasiswa ? $mahasiswa->nama_lengkap : $nim) . ' telah dibatalkan.');
+    }
+
+    return back()->with('error', 'Data presensi tidak ditemukan.');
+});
+
 Route::get('/history', function (Request $request) {
     if (!$request->session()->has('logged_in')) return redirect('/login');
     $history = Presensi::join('mahasiswas', 'presensis.nim', '=', 'mahasiswas.nim')
